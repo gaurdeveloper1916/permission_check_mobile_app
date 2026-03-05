@@ -13,6 +13,7 @@ import PermissionCard from "./cards/LocationCard"
 import CameraPermissionCard from "./cards/CameraPermissionScreen"; 
 import PhotosPermissionCard from "./cards/PhotosPermissionCard";
 import MicrophonePermissionCard from "./cards/MicrophonePermissionCard";
+import NotificationPermissionCard from "./cards/NotificationPermissionCard";
 
 
 export default function PermissionHealthScreen() {
@@ -25,6 +26,7 @@ export default function PermissionHealthScreen() {
         <CameraPermissionCard/>
         <PhotosPermissionCard/>
         <MicrophonePermissionCard/>
+        <NotificationPermissionCard/>
   
         {/* Run All Button */}
         <TouchableOpacity style={styles.runAllBtn}>
