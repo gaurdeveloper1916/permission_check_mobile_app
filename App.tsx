@@ -12,7 +12,6 @@ import {
   Alert,
   Platform,
 } from 'react-native';
-
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Feather from 'react-native-vector-icons/Feather';
@@ -20,7 +19,8 @@ import {
   check,
   request,
   PERMISSIONS,
-  RESULTS
+  RESULTS,
+  openSettings
 } from 'react-native-permissions';
 import NitroSound from 'react-native-nitro-sound';
 import Geolocation from 'react-native-geolocation-service';
@@ -58,46 +58,91 @@ const SubmissionDetails = () => {
   const [modalMessage, setModalMessage] = useState('');
 
   const [seconds, setSeconds] = useState(0);
+  const [voiceDenyCount, setVoiceDenyCount] = useState(0);
+
 
   /* ---------------- AUTO LOCATION ON LOAD ---------------- */
 
   useEffect(() => {
     requestLocationPermission();
   }, []);
+
+  const [denyCount, setDenyCount] = useState(0);
+  const [denyCountLocation, setDenyCountLocation] = useState(0)
+
+
+
+  /* ---------------- Access Camera ---------------- */
   const openCamera = async () => {
-    const permission = getCameraPermission();
+    try {
+      const permission = getCameraPermission();
+      const res = await request(permission);
 
-    const res = await request(permission);
+      console.log("Camera permission:", res);
 
-    if (res === RESULTS.GRANTED) {
-      const options = {
-        mediaType: 'photo',
-        cameraType: 'back',
-        saveToPhotos: true,
-      };
+      if (res === RESULTS.GRANTED) {
+        launchDeviceCamera();
+        return;
+      }
 
-      launchCamera(options, response => {
-        if (response.didCancel) {
-          console.log('User cancelled camera');
-        } else if (response.errorCode) {
-          console.log('Camera error:', response.errorMessage);
-        } else {
-          const asset = response.assets[0];
-          setSelectedImage(asset);
-          console.log('Image URI:', asset.uri);
-        }
-      });
-    } else if (res === RESULTS.BLOCKED) {
-      console.log('Camera permission blocked');
-    } else {
-      console.log('Camera permission denied');
+      // handle denied / blocked
+      handlePermissionDenied(res);
+
+    } catch (error) {
+      console.log("Camera error:", error);
     }
   };
+
+  const launchDeviceCamera = () => {
+    const options = {
+      mediaType: "photo",
+      cameraType: "back",
+      saveToPhotos: true,
+    };
+
+    launchCamera(options, (response) => {
+
+      if (response?.didCancel) {
+        console.log("User cancelled camera");
+        return;
+      }
+
+      if (response?.errorCode) {
+        console.log("Camera error:", response.errorMessage);
+        return;
+      }
+
+      const asset = response?.assets?.[0];
+
+      if (asset) {
+        setSelectedImage(asset);
+        console.log("Image URI:", asset.uri);
+      }
+    });
+  };
+  const handlePermissionDenied = (status) => {
+    if (status !== RESULTS.DENIED && status !== RESULTS.BLOCKED) return;
+
+    const newCount = denyCount + 1;
+    setDenyCount(newCount);
+
+    console.log("Permission denied:", newCount);
+
+    // open settings after 3 attempts
+    if (newCount >= 3) {
+      openSettings().catch(() =>
+        console.log("Cannot open settings")
+      );
+    }
+  };
+  /* ---------------- Access Camera ---------------- */
+
   const getCameraPermission = () => {
     return Platform.OS === 'ios'
       ? PERMISSIONS.IOS.CAMERA
       : PERMISSIONS.ANDROID.CAMERA;
   };
+
   const openGallery = async () => {
     const result = await launchImageLibrary({
       mediaType: 'photo',
@@ -109,43 +154,87 @@ const SubmissionDetails = () => {
     }
   };
 
+
+  /* ---------------- Location ---------------- */
+
   const requestLocationPermission = async () => {
-    const permission =
-      Platform.OS === 'android'
-        ? PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION
-        : PERMISSIONS.IOS.LOCATION_WHEN_IN_USE;
+    try {
+      const permission = getLocationPermission();
+      const res = await request(permission);
 
-    const res = await request(permission);
+      console.log("Location permission:", res);
 
-    if (res === RESULTS.GRANTED) {
-      setLocationGranted(true);
-      fetchLocation();
-    } else {
-      setLocationGranted(false);
+      if (res === RESULTS.GRANTED) {
+        setLocationGranted(true);
+        fetchDeviceLocation();
+        return;
+      }
+
+      handleLocationPermissionDenied(res);
+
+    } catch (error) {
+      console.log("Location permission error:", error);
     }
   };
 
-  const fetchLocation = () => {
+  const getLocationPermission = () => {
+    return Platform.OS === "android"
+      ? PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION
+      : PERMISSIONS.IOS.LOCATION_WHEN_IN_USE;
+  };
+  const handleLocationPermissionDenied = (status) => {
+    if (status !== RESULTS.DENIED && status !== RESULTS.BLOCKED) return;
+
+    const newCount = denyCountLocation + 1;
+    setDenyCountLocation(newCount);
+
+    console.log("Location permission denied:", newCount);
+
+    if (newCount >= 3) {
+      openSettings().catch(() =>
+        console.log("Cannot open settings")
+      );
+    }
+    setLocationGranted(false);
+  };
+
+  const fetchDeviceLocation = () => {
     Geolocation.getCurrentPosition(
-      async pos => {
+      async (pos) => {
         const { latitude, longitude } = pos.coords;
+
         setLatitude(latitude);
         setLongitude(longitude);
 
         try {
           const geo = await Geocoder.from(latitude, longitude);
-          setAddress(geo.results[0].formatted_address);
-        } catch (e) { }
+
+          const formattedAddress =
+            geo?.results?.[0]?.formatted_address || "";
+
+          setAddress(formattedAddress);
+
+        } catch (error) {
+          console.log("Geocoder error:", error);
+        }
       },
-      err => console.log(err),
-      { enableHighAccuracy: true }
+      (error) => {
+        console.log("Location error:", error);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 10000,
+      }
     );
   };
+  /* ---------------- Location ---------------- */
+
 
   /* ---------------- VOICE ---------------- */
-
   useEffect(() => {
     let interval;
+
     if (recording) {
       interval = setInterval(() => {
         setSeconds(prev => prev + 1);
@@ -153,38 +242,124 @@ const SubmissionDetails = () => {
     } else {
       clearInterval(interval);
     }
+
     return () => clearInterval(interval);
+
   }, [recording]);
 
+
+  /* -------- permission request -------- */
+
   const toggleRecording = async () => {
-    const permission =
-      Platform.OS === 'android'
-        ? PERMISSIONS.ANDROID.RECORD_AUDIO
-        : PERMISSIONS.IOS.MICROPHONE;
+    try {
 
-    const res = await request(permission);
-    if (res !== RESULTS.GRANTED) return;
+      const permission = getMicrophonePermission();
 
-    if (!recording) {
-      const path = await NitroSound.startRecorder();
-      setRecordedPath(path);
-      setRecording(true);
-      setSeconds(0);
-    } else {
-      await NitroSound.stopRecorder();
-      setRecording(false);
+      const res = await request(permission);
+
+      console.log("Mic permission:", res);
+
+      if (res === RESULTS.GRANTED) {
+        handleRecording();
+        return;
+      }
+
+      handleVoicePermissionDenied(res);
+
+    } catch (error) {
+      console.log("Mic error:", error);
     }
   };
 
-  const playRecording = async () => {
-    if (!recordedPath) return;
-    await NitroSound.startPlayer(recordedPath);
+
+  /* -------- permission getter -------- */
+
+  const getMicrophonePermission = () => {
+    return Platform.OS === "android"
+      ? PERMISSIONS.ANDROID.RECORD_AUDIO
+      : PERMISSIONS.IOS.MICROPHONE;
   };
 
+
+  /* -------- permission denied handler -------- */
+
+  const handleVoicePermissionDenied = (status) => {
+
+    if (status !== RESULTS.DENIED && status !== RESULTS.BLOCKED) return;
+
+    const newCount = voiceDenyCount + 1;
+    setVoiceDenyCount(newCount);
+
+    console.log("Mic permission denied:", newCount);
+
+    if (newCount >= 3) {
+      openSettings().catch(() =>
+        console.log("Cannot open settings")
+      );
+    }
+
+  };
+
+
+  /* -------- recording start/stop -------- */
+
+  const handleRecording = async () => {
+
+    try {
+
+      if (!recording) {
+
+        const path = await NitroSound.startRecorder();
+
+        setRecordedPath(path);
+        setRecording(true);
+        setSeconds(0);
+
+        console.log("Recording started:", path);
+
+      } else {
+
+        await NitroSound.stopRecorder();
+
+        setRecording(false);
+
+        console.log("Recording stopped");
+
+      }
+
+    } catch (error) {
+      console.log("Recorder error:", error);
+    }
+
+  };
+
+
+  /* -------- play recording -------- */
+
+  const playRecording = async () => {
+
+    try {
+
+      if (!recordedPath) return;
+
+      await NitroSound.startPlayer(recordedPath);
+
+    } catch (error) {
+      console.log("Play error:", error);
+    }
+
+  };
+
+
+  /* -------- format timer -------- */
+
   const formatTime = () => {
+
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
+
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
   };
 
   /* ---------------- SUBMIT ---------------- */
@@ -592,7 +767,7 @@ const styles = StyleSheet.create({
     bottom: 20,
     left: 20,
     right: 20,
-  
+
   },
 
   submitBtn: {
